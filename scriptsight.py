@@ -260,19 +260,21 @@ def filter_and_collect(json_folder, img_root, sel_tools, sel_orients, sel_colors
 
 # ---- Overlay Drawing & Save ----
 def draw_overlay_and_save(src, dst, anns):
-    img = Image.open(src).convert('RGB')
-    draw = ImageDraw.Draw(img)
-    font = ImageFont.load_default()
-    for ann in anns:
-        color = parse_color(ann.get('color_code', '255-255-0'))
-        tool = ann.get('writing_tool', '').upper()
-        for seg in ann.get('segmentation', []):
-            pts = [(int(seg[i]), int(seg[i + 1])) for i in range(0, len(seg), 2)]
-            draw.line(pts + [pts[0]], width=5, fill=color)
-            if tool:
-                x, y = pts[0]
-                draw.text((x, max(y - 10, 0)), tool, font=font, fill=color)
-    img.save(dst)
+    """Draw annotations on an image and save the result."""
+    with Image.open(src) as img:
+        img = img.convert('RGB')
+        draw = ImageDraw.Draw(img)
+        font = ImageFont.load_default()
+        for ann in anns:
+            color = parse_color(ann.get('color_code', '255-255-0'))
+            tool = ann.get('writing_tool', '').upper()
+            for seg in ann.get('segmentation', []):
+                pts = [(int(seg[i]), int(seg[i + 1])) for i in range(0, len(seg), 2)]
+                draw.line(pts + [pts[0]], width=5, fill=color)
+                if tool:
+                    x, y = pts[0]
+                    draw.text((x, max(y - 10, 0)), tool, font=font, fill=color)
+        img.save(dst)
 
 
 # ---- Thumbnail Generation ----
@@ -285,7 +287,8 @@ def make_thumbnail(full, anns, cfg, overlay):
     ms = int(cfg.get('min_score', 0.0) * 100)
 
     # compute this image’s page bbox area (fallback to full image if no anns)
-    with Image.open(full).convert('RGB') as img:
+    with Image.open(full) as img:
+        img = img.convert('RGB')
         W, H = img.size
 
         # find the first annotation that has page_position
@@ -680,6 +683,7 @@ def main():
 
             # load & resize for screen
             with Image.open(preview_path) as img:
+                img = img.convert('RGB')
                 screen_w = window.TKroot.winfo_screenwidth()
                 screen_h = window.TKroot.winfo_screenheight()
                 max_w, max_h = int(screen_w * 0.9), int(screen_h * 0.9)
