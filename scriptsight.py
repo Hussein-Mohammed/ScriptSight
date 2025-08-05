@@ -258,43 +258,43 @@ def make_thumbnail(full, anns, cfg, overlay):
     ms = int(cfg.get('min_score', 0.0) * 100)
 
     # compute this image’s page bbox area (fallback to full image if no anns)
-    img = Image.open(full).convert('RGB')
-    W, H = img.size
+    with Image.open(full).convert('RGB') as img:
+        W, H = img.size
 
-    # find the first annotation that has page_position
-    page_ann = next((a for a in anns if 'page_position' in a), None)
-    if page_ann:
-        xc, yc, rw, rh = page_ann['page_position']
-    else:
-        # fallback to full-image as “page”
-        xc, yc, rw, rh = 0.5, 0.5, 1.0, 1.0
+        # find the first annotation that has page_position
+        page_ann = next((a for a in anns if 'page_position' in a), None)
+        if page_ann:
+            xc, yc, rw, rh = page_ann['page_position']
+        else:
+            # fallback to full-image as “page”
+            xc, yc, rw, rh = 0.5, 0.5, 1.0, 1.0
 
-    crop_w, crop_h = rw * W, rh * H
-    page_area = crop_w * crop_h
+        crop_w, crop_h = rw * W, rh * H
+        page_area = crop_w * crop_h
 
-    ma = int(cfg.get('min_area', 0.0) * page_area)
-    flag = 'ov' if overlay else 'no'
+        ma = int(cfg.get('min_area', 0.0) * page_area)
+        flag = 'ov' if overlay else 'no'
 
-    stem = Path(full).stem
-    thumb = cache / f"{stem}_{flag}_s{ms:02d}_a{ma}.png"
+        stem = Path(full).stem
+        thumb = cache / f"{stem}_{flag}_s{ms:02d}_a{ma}.png"
 
-    if cfg['cache_enabled'] and thumb.exists():
+        if cfg['cache_enabled'] and thumb.exists():
+            return str(thumb)
+
+        if overlay and anns:
+            draw, imgfont = ImageDraw.Draw(img), ImageFont.load_default()
+            for ann in anns:
+                col = parse_color(ann.get('color_code', '255-255-0'))
+                tool = ann.get('writing_tool', '').upper()
+                for seg in ann.get('segmentation', []):
+                    pts = [(int(seg[i]), int(seg[i + 1])) for i in range(0, len(seg), 2)]
+                    draw.line(pts + [pts[0]], width=5, fill=col)
+                    if tool:
+                        x, y = pts[0]
+                        draw.text((x, max(y - 10, 0)), tool, font=imgfont, fill=col)
+        img.thumbnail((sz, sz))
+        img.save(thumb)
         return str(thumb)
-    img = Image.open(full).convert('RGB')
-    if overlay and anns:
-        draw, imgfont = ImageDraw.Draw(img), ImageFont.load_default()
-        for ann in anns:
-            col = parse_color(ann.get('color_code', '255-255-0'))
-            tool = ann.get('writing_tool', '').upper()
-            for seg in ann.get('segmentation', []):
-                pts = [(int(seg[i]), int(seg[i + 1])) for i in range(0, len(seg), 2)]
-                draw.line(pts + [pts[0]], width=5, fill=col)
-                if tool:
-                    x, y = pts[0]
-                    draw.text((x, max(y - 10, 0)), tool, font=imgfont, fill=col)
-    img.thumbnail((sz, sz))
-    img.save(thumb)
-    return str(thumb)
 
 
 # ---- Main GUI ----
