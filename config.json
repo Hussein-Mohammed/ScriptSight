@@ -1,0 +1,11 @@
+{
+    "json_folder": "",
+    "img_folder": "",
+    "out_folder": "",
+    "thumb_size": 128,
+    "min_score": 0.0,
+    "min_area": 0.0,
+    "cache_folder": ".thumb_cache",
+    "cache_enabled": false,
+    "show_tool_labels": true
+}

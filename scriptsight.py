@@ -70,7 +70,8 @@ DEFAULT_CONFIG = {
     'min_score': 0.0,
     'min_area': 0.0,
     'cache_folder': str(SCRIPT_DIR / '.thumb_cache'),
-    'cache_enabled': False
+    'cache_enabled': False,
+    'show_tool_labels': True,
 }
 
 
@@ -117,7 +118,9 @@ def load_config():
     if CONFIG_PATH.exists():
         try:
             cfg = json.loads(CONFIG_PATH.read_text())
-            return {**DEFAULT_CONFIG, **cfg}
+            cfg = {**DEFAULT_CONFIG, **cfg}
+            cfg['show_tool_labels'] = bool(cfg.get('show_tool_labels', True))
+            return cfg
         except:
             pass
     return DEFAULT_CONFIG.copy()
@@ -125,7 +128,8 @@ def load_config():
 
 def save_config(cfg):
     try:
-        CONFIG_PATH.write_text(json.dumps(cfg, indent=4))
+        data = {**DEFAULT_CONFIG, **cfg}
+        CONFIG_PATH.write_text(json.dumps(data, indent=4))
     except:
         pass
 
@@ -259,8 +263,20 @@ def filter_and_collect(json_folder, img_root, sel_tools, sel_orients, sel_colors
 
 
 # ---- Overlay Drawing & Save ----
-def draw_overlay_and_save(src, dst, anns):
-    """Draw annotations on an image and save the result."""
+def draw_overlay_and_save(src, dst, anns, cfg):
+    """Draw annotations on an image and save the result.
+
+    Parameters
+    ----------
+    src : str or Path
+        Source image path.
+    dst : str or Path
+        Destination path for the saved overlay image.
+    anns : list
+        Annotations to draw.
+    cfg : dict
+        Configuration dict controlling overlay options.
+    """
     with Image.open(src) as img:
         img = img.convert('RGB')
         draw = ImageDraw.Draw(img)
@@ -271,7 +287,7 @@ def draw_overlay_and_save(src, dst, anns):
             for seg in ann.get('segmentation', []):
                 pts = [(int(seg[i]), int(seg[i + 1])) for i in range(0, len(seg), 2)]
                 draw.line(pts + [pts[0]], width=5, fill=color)
-                if tool:
+                if tool and cfg.get('show_tool_labels', True):
                     x, y = pts[0]
                     draw.text((x, max(y - 10, 0)), tool, font=font, fill=color)
         img.save(dst)
@@ -319,7 +335,7 @@ def make_thumbnail(full, anns, cfg, overlay):
                 for seg in ann.get('segmentation', []):
                     pts = [(int(seg[i]), int(seg[i + 1])) for i in range(0, len(seg), 2)]
                     draw.line(pts + [pts[0]], width=5, fill=col)
-                    if tool:
+                    if tool and cfg.get('show_tool_labels', True):
                         x, y = pts[0]
                         draw.text((x, max(y - 10, 0)), tool, font=imgfont, fill=col)
         img.thumbnail((sz, sz))
@@ -625,7 +641,7 @@ def main():
             for i, (_, full, anns) in enumerate(thumbs):
                 dst = out_dir / Path(full).name
                 if vals['-OVERLAY-']:
-                    draw_overlay_and_save(full, dst, anns)
+                    draw_overlay_and_save(full, dst, anns, cfg)
 
                 else:
                     shutil.copy2(full, dst)
@@ -675,7 +691,7 @@ def main():
                 with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
                     tmp_path = tmp.name
                 draw_overlay_and_save(full, tmp_path,
-                                      anns)  # uses width=5 and same label logic :contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}:contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
+                                      anns, cfg)  # uses width=5 and same label logic :contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}:contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
                 preview_path = tmp_path
 
             else:
