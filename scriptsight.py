@@ -634,28 +634,28 @@ def main():
             # if overlay mode, draw annotations on the full-res image
             if vals['-OVERLAY-']:
                 import tempfile
-
-                # write out a temp file with your exact overlay routine
-                tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-                draw_overlay_and_save(full, tmp.name,
+                # create a temporary file for the overlay and remember its path
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                    tmp_path = tmp.name
+                draw_overlay_and_save(full, tmp_path,
                                       anns)  # uses width=5 and same label logic :contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}:contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
-                preview_path = tmp.name
+                preview_path = tmp_path
 
             else:
                 preview_path = full
 
             # load & resize for screen
-            img = Image.open(preview_path)
-            screen_w = window.TKroot.winfo_screenwidth()
-            screen_h = window.TKroot.winfo_screenheight()
-            max_w, max_h = int(screen_w * 0.9), int(screen_h * 0.9)
-            ratio = min(max_w / img.width, max_h / img.height, 1.0)
+            with Image.open(preview_path) as img:
+                screen_w = window.TKroot.winfo_screenwidth()
+                screen_h = window.TKroot.winfo_screenheight()
+                max_w, max_h = int(screen_w * 0.9), int(screen_h * 0.9)
+                ratio = min(max_w / img.width, max_h / img.height, 1.0)
 
-            if ratio < 1.0:
-                preview_img = img.resize((int(img.width * ratio), int(img.height * ratio)),
-                                         resample=Image.LANCZOS)
-            else:
-                preview_img = img
+                if ratio < 1.0:
+                    preview_img = img.resize((int(img.width * ratio), int(img.height * ratio)),
+                                             resample=Image.LANCZOS)
+                else:
+                    preview_img = img.copy()
 
             # display in a modal window
             buf = io.BytesIO()
@@ -675,6 +675,8 @@ def main():
                 if e in (sg.WIN_CLOSED, 'Close'):
                     break
             preview.close()
+            if vals['-OVERLAY-']:
+                os.unlink(preview_path)
 
     window.close()
 
