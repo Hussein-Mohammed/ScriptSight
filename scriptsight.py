@@ -70,8 +70,36 @@ DEFAULT_CONFIG = {
     'min_score': 0.0,
     'min_area': 0.0,
     'cache_folder': str(SCRIPT_DIR / '.thumb_cache'),
-    'cache_enabled': False
+    'cache_enabled': False,
+    'show_tool_labels': True
 }
+
+
+# ---- Annotation Cache ----
+# mapping from JSON file path to {"mtime": float, "data": dict}
+_ANNOTATION_CACHE = {}
+
+
+def _load_json_cached(path):
+    """Load and cache JSON data, reusing parsed content when unchanged."""
+    path = str(path)
+    mtime = os.path.getmtime(path)
+    entry = _ANNOTATION_CACHE.get(path)
+    if entry and entry["mtime"] == mtime:
+        return entry["data"]
+
+    data = json.loads(Path(path).read_text())
+    _ANNOTATION_CACHE[path] = {"mtime": mtime, "data": data}
+    return data
+
+
+def clear_annotation_cache():
+    """Clear cached annotation data.
+
+    Should be called when the user switches JSON directories to avoid
+    cross-directory cache contamination.
+    """
+    _ANNOTATION_CACHE.clear()
 
 
 # ---- Popup ----
@@ -153,7 +181,7 @@ def find_image_file(img_dir, name):
 def gather_properties(json_folder):
     tools, orients, colors = set(), set(), set()
     for jf in Path(json_folder).glob('*.json'):
-        data = json.loads(jf.read_text())
+        data = _load_json_cached(jf)
         for ann in data.get('annotations', []):
             wt = ann.get('writing_tool', '').lower()
             ori = ann.get('orientation', '').lower()
@@ -168,7 +196,7 @@ def filter_and_collect(json_folder, img_root, sel_tools, sel_orients, sel_colors
                        no_words, min_score=0.0, area_ratio=0.0):
     results = []
     for jf in Path(json_folder).glob('*.json'):
-        data = json.loads(jf.read_text())
+        data = _load_json_cached(jf)
         ann_map = {}
         for ann in data.get('annotations', []):
             ann_map.setdefault(ann['image_id'], []).append(ann)
@@ -232,7 +260,7 @@ def filter_and_collect(json_folder, img_root, sel_tools, sel_orients, sel_colors
 
 
 # ---- Overlay Drawing & Save ----
-def draw_overlay_and_save(src, dst, anns):
+def draw_overlay_and_save(src, dst, anns, show_labels=True):
     img = Image.open(src).convert('RGB')
     draw = ImageDraw.Draw(img)
     font = ImageFont.load_default()
@@ -242,7 +270,7 @@ def draw_overlay_and_save(src, dst, anns):
         for seg in ann.get('segmentation', []):
             pts = [(int(seg[i]), int(seg[i + 1])) for i in range(0, len(seg), 2)]
             draw.line(pts + [pts[0]], width=5, fill=color)
-            if tool:
+            if show_labels and tool:
                 x, y = pts[0]
                 draw.text((x, max(y - 10, 0)), tool, font=font, fill=color)
     img.save(dst)
@@ -258,48 +286,50 @@ def make_thumbnail(full, anns, cfg, overlay):
     ms = int(cfg.get('min_score', 0.0) * 100)
 
     # compute this image’s page bbox area (fallback to full image if no anns)
-    img = Image.open(full).convert('RGB')
-    W, H = img.size
+    with Image.open(full).convert('RGB') as img:
+        W, H = img.size
 
-    # find the first annotation that has page_position
-    page_ann = next((a for a in anns if 'page_position' in a), None)
-    if page_ann:
-        xc, yc, rw, rh = page_ann['page_position']
-    else:
-        # fallback to full-image as “page”
-        xc, yc, rw, rh = 0.5, 0.5, 1.0, 1.0
+        # find the first annotation that has page_position
+        page_ann = next((a for a in anns if 'page_position' in a), None)
+        if page_ann:
+            xc, yc, rw, rh = page_ann['page_position']
+        else:
+            # fallback to full-image as “page”
+            xc, yc, rw, rh = 0.5, 0.5, 1.0, 1.0
 
-    crop_w, crop_h = rw * W, rh * H
-    page_area = crop_w * crop_h
+        crop_w, crop_h = rw * W, rh * H
+        page_area = crop_w * crop_h
 
-    ma = int(cfg.get('min_area', 0.0) * page_area)
-    flag = 'ov' if overlay else 'no'
+        ma = int(cfg.get('min_area', 0.0) * page_area)
+        flag = 'ov' if overlay else 'no'
 
-    stem = Path(full).stem
-    thumb = cache / f"{stem}_{flag}_s{ms:02d}_a{ma}.png"
+        stem = Path(full).stem
+        thumb = cache / f"{stem}_{flag}_s{ms:02d}_a{ma}.png"
 
-    if cfg['cache_enabled'] and thumb.exists():
+        if cfg['cache_enabled'] and thumb.exists():
+            return str(thumb)
+
+        if overlay and anns:
+            draw, imgfont = ImageDraw.Draw(img), ImageFont.load_default()
+            show_labels = cfg.get('show_tool_labels', True)
+            for ann in anns:
+                col = parse_color(ann.get('color_code', '255-255-0'))
+                tool = ann.get('writing_tool', '').upper()
+                for seg in ann.get('segmentation', []):
+                    pts = [(int(seg[i]), int(seg[i + 1])) for i in range(0, len(seg), 2)]
+                    draw.line(pts + [pts[0]], width=5, fill=col)
+                    if show_labels and tool:
+                        x, y = pts[0]
+                        draw.text((x, max(y - 10, 0)), tool, font=imgfont, fill=col)
+        img.thumbnail((sz, sz))
+        img.save(thumb)
         return str(thumb)
-    img = Image.open(full).convert('RGB')
-    if overlay and anns:
-        draw, imgfont = ImageDraw.Draw(img), ImageFont.load_default()
-        for ann in anns:
-            col = parse_color(ann.get('color_code', '255-255-0'))
-            tool = ann.get('writing_tool', '').upper()
-            for seg in ann.get('segmentation', []):
-                pts = [(int(seg[i]), int(seg[i + 1])) for i in range(0, len(seg), 2)]
-                draw.line(pts + [pts[0]], width=5, fill=col)
-                if tool:
-                    x, y = pts[0]
-                    draw.text((x, max(y - 10, 0)), tool, font=imgfont, fill=col)
-    img.thumbnail((sz, sz))
-    img.save(thumb)
-    return str(thumb)
 
 
 # ---- Main GUI ----
 def main():
     cfg = load_config()
+    current_json_folder = cfg.get('json_folder', '')
 
     layout = [
         [sg.Text(
@@ -403,6 +433,9 @@ def main():
             break
 
         if event in ('-JSON-', '-IMG-') and vals['-JSON-'] and vals['-IMG-']:
+            if vals['-JSON-'] != current_json_folder:
+                clear_annotation_cache()
+                current_json_folder = vals['-JSON-']
             t, o, c = gather_properties(vals['-JSON-'])
             window['-TOOLS-'].update(values=t)
             window['-ORIENTS-'].update(values=o)
@@ -413,6 +446,9 @@ def main():
             window['-COLORS-'].update(values=final_colors)
 
         if event == 'Filter & Show':
+            if vals['-JSON-'] != current_json_folder:
+                clear_annotation_cache()
+                current_json_folder = vals['-JSON-']
             # remember current selections
             sel_tools = vals['-TOOLS-']
             sel_orients = vals['-ORIENTS-']
@@ -588,7 +624,7 @@ def main():
             for i, (_, full, anns) in enumerate(thumbs):
                 dst = out_dir / Path(full).name
                 if vals['-OVERLAY-']:
-                    draw_overlay_and_save(full, dst, anns)
+                    draw_overlay_and_save(full, dst, anns, cfg.get('show_tool_labels', True))
 
                 else:
                     shutil.copy2(full, dst)
@@ -634,28 +670,28 @@ def main():
             # if overlay mode, draw annotations on the full-res image
             if vals['-OVERLAY-']:
                 import tempfile
-
-                # write out a temp file with your exact overlay routine
-                tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-                draw_overlay_and_save(full, tmp.name,
-                                      anns)  # uses width=5 and same label logic :contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}:contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
-                preview_path = tmp.name
+                # create a temporary file for the overlay and remember its path
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                    tmp_path = tmp.name
+                draw_overlay_and_save(full, tmp_path,
+                                      anns, cfg.get('show_tool_labels', True))  # uses width=5 and same label logic
+                preview_path = tmp_path
 
             else:
                 preview_path = full
 
             # load & resize for screen
-            img = Image.open(preview_path)
-            screen_w = window.TKroot.winfo_screenwidth()
-            screen_h = window.TKroot.winfo_screenheight()
-            max_w, max_h = int(screen_w * 0.9), int(screen_h * 0.9)
-            ratio = min(max_w / img.width, max_h / img.height, 1.0)
+            with Image.open(preview_path) as img:
+                screen_w = window.TKroot.winfo_screenwidth()
+                screen_h = window.TKroot.winfo_screenheight()
+                max_w, max_h = int(screen_w * 0.9), int(screen_h * 0.9)
+                ratio = min(max_w / img.width, max_h / img.height, 1.0)
 
-            if ratio < 1.0:
-                preview_img = img.resize((int(img.width * ratio), int(img.height * ratio)),
-                                         resample=Image.LANCZOS)
-            else:
-                preview_img = img
+                if ratio < 1.0:
+                    preview_img = img.resize((int(img.width * ratio), int(img.height * ratio)),
+                                             resample=Image.LANCZOS)
+                else:
+                    preview_img = img.copy()
 
             # display in a modal window
             buf = io.BytesIO()
@@ -675,6 +711,8 @@ def main():
                 if e in (sg.WIN_CLOSED, 'Close'):
                     break
             preview.close()
+            if vals['-OVERLAY-']:
+                os.unlink(preview_path)
 
     window.close()
 
