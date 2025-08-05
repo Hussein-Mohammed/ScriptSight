@@ -74,6 +74,33 @@ DEFAULT_CONFIG = {
 }
 
 
+# ---- Annotation Cache ----
+# mapping from JSON file path to {"mtime": float, "data": dict}
+_ANNOTATION_CACHE = {}
+
+
+def _load_json_cached(path):
+    """Load and cache JSON data, reusing parsed content when unchanged."""
+    path = str(path)
+    mtime = os.path.getmtime(path)
+    entry = _ANNOTATION_CACHE.get(path)
+    if entry and entry["mtime"] == mtime:
+        return entry["data"]
+
+    data = json.loads(Path(path).read_text())
+    _ANNOTATION_CACHE[path] = {"mtime": mtime, "data": data}
+    return data
+
+
+def clear_annotation_cache():
+    """Clear cached annotation data.
+
+    Should be called when the user switches JSON directories to avoid
+    cross-directory cache contamination.
+    """
+    _ANNOTATION_CACHE.clear()
+
+
 # ---- Popup ----
 def show_error(msg):
     layout = [[sg.Text(msg)], [sg.Button('OK')]]
@@ -153,7 +180,7 @@ def find_image_file(img_dir, name):
 def gather_properties(json_folder):
     tools, orients, colors = set(), set(), set()
     for jf in Path(json_folder).glob('*.json'):
-        data = json.loads(jf.read_text())
+        data = _load_json_cached(jf)
         for ann in data.get('annotations', []):
             wt = ann.get('writing_tool', '').lower()
             ori = ann.get('orientation', '').lower()
@@ -168,7 +195,7 @@ def filter_and_collect(json_folder, img_root, sel_tools, sel_orients, sel_colors
                        no_words, min_score=0.0, area_ratio=0.0):
     results = []
     for jf in Path(json_folder).glob('*.json'):
-        data = json.loads(jf.read_text())
+        data = _load_json_cached(jf)
         ann_map = {}
         for ann in data.get('annotations', []):
             ann_map.setdefault(ann['image_id'], []).append(ann)
@@ -300,6 +327,7 @@ def make_thumbnail(full, anns, cfg, overlay):
 # ---- Main GUI ----
 def main():
     cfg = load_config()
+    current_json_folder = cfg.get('json_folder', '')
 
     layout = [
         [sg.Text(
@@ -403,6 +431,9 @@ def main():
             break
 
         if event in ('-JSON-', '-IMG-') and vals['-JSON-'] and vals['-IMG-']:
+            if vals['-JSON-'] != current_json_folder:
+                clear_annotation_cache()
+                current_json_folder = vals['-JSON-']
             t, o, c = gather_properties(vals['-JSON-'])
             window['-TOOLS-'].update(values=t)
             window['-ORIENTS-'].update(values=o)
@@ -413,6 +444,9 @@ def main():
             window['-COLORS-'].update(values=final_colors)
 
         if event == 'Filter & Show':
+            if vals['-JSON-'] != current_json_folder:
+                clear_annotation_cache()
+                current_json_folder = vals['-JSON-']
             # remember current selections
             sel_tools = vals['-TOOLS-']
             sel_orients = vals['-ORIENTS-']
