@@ -70,7 +70,8 @@ DEFAULT_CONFIG = {
     'min_score': 0.0,
     'min_area': 0.0,
     'cache_folder': str(SCRIPT_DIR / '.thumb_cache'),
-    'cache_enabled': False
+    'cache_enabled': False,
+    'show_tool_labels': True
 }
 
 
@@ -232,7 +233,7 @@ def filter_and_collect(json_folder, img_root, sel_tools, sel_orients, sel_colors
 
 
 # ---- Overlay Drawing & Save ----
-def draw_overlay_and_save(src, dst, anns):
+def draw_overlay_and_save(src, dst, anns, show_labels=True):
     img = Image.open(src).convert('RGB')
     draw = ImageDraw.Draw(img)
     font = ImageFont.load_default()
@@ -242,7 +243,7 @@ def draw_overlay_and_save(src, dst, anns):
         for seg in ann.get('segmentation', []):
             pts = [(int(seg[i]), int(seg[i + 1])) for i in range(0, len(seg), 2)]
             draw.line(pts + [pts[0]], width=5, fill=color)
-            if tool:
+            if show_labels and tool:
                 x, y = pts[0]
                 draw.text((x, max(y - 10, 0)), tool, font=font, fill=color)
     img.save(dst)
@@ -289,7 +290,7 @@ def make_thumbnail(full, anns, cfg, overlay):
             for seg in ann.get('segmentation', []):
                 pts = [(int(seg[i]), int(seg[i + 1])) for i in range(0, len(seg), 2)]
                 draw.line(pts + [pts[0]], width=5, fill=col)
-                if tool:
+                if cfg.get('show_tool_labels', True) and tool:
                     x, y = pts[0]
                     draw.text((x, max(y - 10, 0)), tool, font=imgfont, fill=col)
     img.thumbnail((sz, sz))
@@ -588,7 +589,7 @@ def main():
             for i, (_, full, anns) in enumerate(thumbs):
                 dst = out_dir / Path(full).name
                 if vals['-OVERLAY-']:
-                    draw_overlay_and_save(full, dst, anns)
+                    draw_overlay_and_save(full, dst, anns, cfg.get('show_tool_labels', True))
 
                 else:
                     shutil.copy2(full, dst)
@@ -638,7 +639,7 @@ def main():
                 # write out a temp file with your exact overlay routine
                 tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
                 draw_overlay_and_save(full, tmp.name,
-                                      anns)  # uses width=5 and same label logic :contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}:contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
+                                      anns, cfg.get('show_tool_labels', True))  # uses width=5 and same label logic
                 preview_path = tmp.name
 
             else:
