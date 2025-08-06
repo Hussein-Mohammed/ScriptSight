@@ -10,6 +10,8 @@ import shutil
 from pathlib import Path
 import uuid
 from datetime import datetime
+import threading
+import queue
 
 # GUI import prefers free PyPI package
 try:
@@ -343,6 +345,27 @@ def make_thumbnail(full, anns, cfg, overlay):
         return str(thumb)
 
 
+# ---- Background worker ----
+def build_thumbnails(q, vals, cfg):
+    """Worker thread to collect files and make thumbnails.
+
+    Progress and completion are reported back via ``q``.
+    """
+    res = filter_and_collect(
+        vals['-JSON-'], vals['-IMG-'],
+        vals['-TOOLS-'], vals['-ORIENTS-'], vals['-COLORS-'], vals['-NO_WORDS-'],
+        float(vals['-MIN_SCORE-']), float(vals['-MIN_AREA-'])
+    )
+    total = len(res)
+    q.put(('TOTAL', total))
+    thumbs_local = []
+    for i, (full, anns) in enumerate(res):
+        thumb = make_thumbnail(full, anns, cfg, vals['-OVERLAY-'])
+        thumbs_local.append((thumb, full, anns))
+        q.put(('PROGRESS', i + 1, total))
+    q.put(('DONE', thumbs_local))
+
+
 # ---- Main GUI ----
 def main():
     cfg = load_config()
@@ -437,9 +460,78 @@ def main():
 
     thumbs = []
     key_to_thumb = {}
+    worker_q = None
+    worker_thread = None
+    total = 0
 
     while True:
-        event, vals = window.read()
+        event, vals = window.read(timeout=100)
+
+        # handle background worker updates
+        if worker_q is not None:
+            try:
+                while True:
+                    msg = worker_q.get_nowait()
+                    kind = msg[0]
+                    if kind == 'TOTAL':
+                        total = msg[1]
+                        window['-PROG-'].update(current_count=0, max=total)
+                        window['-PCT-'].update(f"0/{total}")
+                    elif kind == 'PROGRESS':
+                        current, total = msg[1], msg[2]
+                        window['-PROG-'].update(current_count=current)
+                        window['-PCT-'].update(f"{current}/{total}")
+                    elif kind == 'DONE':
+                        thumbs = msg[1]
+                        key_to_thumb = {}
+
+                        container = window['-THUMB_COL-'].Widget
+                        canvas = next(w for w in container.winfo_children() if w.winfo_class() == 'Canvas')
+                        canvas.update_idletasks()
+                        canvas_width = canvas.winfo_width()
+
+                        pad = 2
+                        thumb_size = cfg['thumb_size']
+                        cols = max(1, (canvas_width + pad) // (thumb_size + pad * 2))
+
+                        rows = []
+                        for idx, (thumb, full, anns) in enumerate(thumbs):
+                            if idx % cols == 0:
+                                rows.append([])
+                            unique_key = f"IMG_{idx}_{uuid.uuid4().hex}"
+                            key_to_thumb[unique_key] = (full, anns)
+                            rows[-1].append(
+                                sg.Image(
+                                    filename=thumb,
+                                    key=unique_key,
+                                    enable_events=True,
+                                    pad=(2, 2)
+                                )
+                            )
+
+                        thumb_col = window['-THUMB_COL-']
+                        container = thumb_col.Widget
+                        canvas = next(w for w in container.winfo_children() if w.winfo_class() == 'Canvas')
+                        frames = [w for w in canvas.winfo_children() if w.winfo_class() == 'Frame']
+                        if frames:
+                            first = frames[0]
+                            for child in first.winfo_children():
+                                child.destroy()
+                            for extra in frames[1:]:
+                                extra.destroy()
+
+                        window.extend_layout(thumb_col, rows)
+                        window.refresh()
+                        canvas.configure(scrollregion=canvas.bbox("all"))
+
+                        worker_q = None
+                        worker_thread = None
+            except queue.Empty:
+                pass
+
+        if event == sg.TIMEOUT_KEY:
+            continue
+
         if event in (sg.WIN_CLOSED, 'Exit'):
             cfg.update({
                 'json_folder': vals['-JSON-'],
@@ -525,74 +617,13 @@ def main():
 
             # make sure that folder exists
             Path(cfg['cache_folder']).mkdir(parents=True, exist_ok=True)
-
-            # compute once per run
-            res = filter_and_collect(
-                vals['-JSON-'], vals['-IMG-'],
-                vals['-TOOLS-'], vals['-ORIENTS-'], vals['-COLORS-'], vals['-NO_WORDS-'],
-                float(vals['-MIN_SCORE-']), float(vals['-MIN_AREA-'])
+            worker_q = queue.Queue()
+            worker_thread = threading.Thread(
+                target=build_thumbnails,
+                args=(worker_q, vals.copy(), cfg.copy()),
+                daemon=True,
             )
-
-            total = len(res)
-            window['-PROG-'].update(current_count=0, max=total)
-            window['-PCT-'].update(f"0/{total}")
-
-            thumbs.clear()
-            for i, (full, anns) in enumerate(res):
-                thumb = make_thumbnail(full, anns, cfg, vals['-OVERLAY-'])
-                thumbs.append((thumb, full, anns))
-                window['-PROG-'].update(current_count=i + 1)
-                window['-PCT-'].update(f"{i + 1}/{total}")
-
-            key_to_thumb = {}
-
-            # compute how many thumbnails fit per row by measuring the actual Canvas width
-            container = window['-THUMB_COL-'].Widget
-            canvas = next(w for w in container.winfo_children() if w.winfo_class() == 'Canvas')
-            canvas.update_idletasks()
-            canvas_width = canvas.winfo_width()
-
-            # account for sg.Image(pad=(2,2)) → 2px on each side
-            pad = 2
-            thumb_size = cfg['thumb_size']
-            cols = max(1, (canvas_width + pad) // (thumb_size + pad * 2))
-
-            rows = []
-            for idx, (thumb, full, anns) in enumerate(thumbs):
-                if idx % cols == 0:
-                    rows.append([])
-                unique_key = f"IMG_{idx}_{uuid.uuid4().hex}"
-                key_to_thumb[unique_key] = (full, anns)
-                rows[-1].append(
-                    sg.Image(
-                        filename=thumb,
-                        key=unique_key,
-                        enable_events=True,
-                        pad=(2, 2)  # ← eliminate per-image padding
-                    )
-                )
-
-            # clear extra Frames and wipe the first one’s children
-            thumb_col = window['-THUMB_COL-']
-            container = thumb_col.Widget
-            canvas = next(w for w in container.winfo_children()
-                          if w.winfo_class() == 'Canvas')
-            frames = [w for w in canvas.winfo_children()
-                      if w.winfo_class() == 'Frame']
-            if frames:
-                # 1) clear children of the very first Frame
-                first = frames[0]
-                for child in first.winfo_children():
-                    child.destroy()
-                # 2) destroy any additional Frames that piled up
-                for extra in frames[1:]:
-                    extra.destroy()
-
-            # now lay out *all* rows at once into that single, clean Frame
-            window.extend_layout(thumb_col, rows)
-
-            window.refresh()
-            canvas.configure(scrollregion=canvas.bbox("all"))
+            worker_thread.start()
 
         elif event == 'Save results':
             # nothing to do if no thumbnails
