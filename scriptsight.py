@@ -182,6 +182,40 @@ def find_image_file(img_dir, name):
     return None
 
 
+def build_filter_subdir(vals):
+    """Return a subdirectory name representing current filter selections.
+
+    Parameters
+    ----------
+    vals : dict
+        Dictionary of current GUI values.
+
+    Returns
+    -------
+    str
+        A string encoding the selected filters, thresholds, overlay flag,
+        and today's date. This name is used for both caching and saving
+        results.
+    """
+    parts = []
+    if vals['-NO_WORDS-']:
+        parts.append('no-text')
+    else:
+        if vals['-TOOLS-']:
+            parts.append('_'.join(vals['-TOOLS-']))
+        if vals['-ORIENTS-']:
+            parts.append('_'.join(vals['-ORIENTS-']))
+        if vals['-COLORS-']:
+            parts.append('_'.join(vals['-COLORS-']))
+    parts.append(f"conf-{vals['-MIN_SCORE-']}")
+    parts.append(f"size-{vals['-MIN_AREA-']}")
+    # overlay only makes sense if there are words
+    if vals['-OVERLAY-'] and not vals['-NO_WORDS-']:
+        parts.append('pred')
+    parts.append(datetime.now().strftime('%d.%m.%Y'))
+    return '_'.join(parts)
+
+
 # ---- Data Scanning ----
 def gather_properties(json_folder):
     tools, orients, colors = set(), set(), set()
@@ -606,24 +640,7 @@ def main():
             save_config(cfg)
 
             # ── build a dynamic thumb_cache subdirectory based on filters + date ─────────
-            parts = []
-            if vals['-NO_WORDS-']:
-                parts.append('no-text')
-            else:
-                if vals['-TOOLS-']:
-                    parts.append('_'.join(vals['-TOOLS-']))
-                if vals['-ORIENTS-']:
-                    parts.append('_'.join(vals['-ORIENTS-']))
-                if vals['-COLORS-']:
-                    parts.append('_'.join(vals['-COLORS-']))
-            parts.append(f"conf-{vals['-MIN_SCORE-']}")
-            parts.append(f"size-{vals['-MIN_AREA-']}")
-            if vals['-OVERLAY-'] and not vals['-NO_WORDS-']:
-                parts.append('pred')
-            date_str = datetime.now().strftime('%d.%m.%Y')
-            parts.append(date_str)
-
-            subdir_name = '_'.join(parts)
+            subdir_name = build_filter_subdir(vals)
             cfg['cache_folder'] = str(SCRIPT_DIR / '.thumb_cache' / subdir_name)
 
             # make sure that folder exists
@@ -653,26 +670,7 @@ def main():
             # out_dir.mkdir(parents=True, exist_ok=True)
 
             # ── build a dynamic subdirectory name based on filters + date ─────────
-            parts = []
-            if vals['-NO_WORDS-']:
-                parts.append('no-text')
-            else:
-                # include only non-empty selections
-                if vals['-TOOLS-']:
-                    parts.append('_'.join(vals['-TOOLS-']))
-                if vals['-ORIENTS-']:
-                    parts.append('_'.join(vals['-ORIENTS-']))
-                if vals['-COLORS-']:
-                    parts.append('_'.join(vals['-COLORS-']))
-            parts.append(f"conf-{vals['-MIN_SCORE-']}")
-            parts.append(f"size-{vals['-MIN_AREA-']}")
-            # overlay only makes sense if there *are* words
-            if vals['-OVERLAY-'] and not vals['-NO_WORDS-']:
-                parts.append('pred')
-            date_str = datetime.now().strftime('%d.%m.%Y')
-            parts.append(date_str)
-
-            subdir_name = '_'.join(parts)
+            subdir_name = build_filter_subdir(vals)
 
             # choose base output folder (user-picked or default), then append our subdir
             base_out = Path(vals['-OUT-']) if vals['-OUT-'] else (SCRIPT_DIR / 'output')
