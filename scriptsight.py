@@ -299,20 +299,27 @@ def filter_and_collect(json_folder, img_root, sel_tools, sel_orients, sel_colors
 
 
 # ---- Overlay Drawing & Save ----
-def draw_overlay_and_save(src, dst, anns, cfg):
-    """Draw annotations on an image and save the result.
+def draw_overlay_and_save(src, dst=None, anns=None, cfg=None, return_image=False):
+    """Draw annotations on an image and either save or return the result.
 
     Parameters
     ----------
     src : str or Path
         Source image path.
-    dst : str or Path
-        Destination path for the saved overlay image.
-    anns : list
+    dst : str or Path, optional
+        Destination path for the saved overlay image. Ignored if
+        ``return_image`` is True.
+    anns : list, optional
         Annotations to draw.
-    cfg : dict
+    cfg : dict, optional
         Configuration dict controlling overlay options.
+    return_image : bool, optional
+        If True, return the annotated :class:`PIL.Image.Image` instead of
+        saving to ``dst``.
     """
+    anns = anns or []
+    cfg = cfg or {}
+
     with Image.open(src) as img:
         img = img.convert('RGB')
         draw = ImageDraw.Draw(img)
@@ -326,7 +333,10 @@ def draw_overlay_and_save(src, dst, anns, cfg):
                 if tool and cfg.get('show_tool_labels', True):
                     x, y = pts[0]
                     draw.text((x, max(y - 10, 0)), tool, font=font, fill=color)
-        img.save(dst)
+        if return_image:
+            return img.copy()
+        if dst:
+            img.save(dst)
 
 
 # ---- Thumbnail Generation ----
@@ -724,32 +734,24 @@ def main():
         elif event in key_to_thumb:
             full, anns = key_to_thumb[event]
 
-            # if overlay mode, draw annotations on the full-res image
+            # obtain the base image, optionally with overlay drawn in memory
             if vals['-OVERLAY-']:
-                import tempfile
-                # create a temporary file for the overlay and remember its path
-                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                    tmp_path = tmp.name
-                draw_overlay_and_save(full, tmp_path,
-                                      anns, cfg)  # uses width=5 and same label logic :contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}:contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
-                preview_path = tmp_path
-
+                base_img = draw_overlay_and_save(full, anns=anns, cfg=cfg, return_image=True)
             else:
-                preview_path = full
+                with Image.open(full) as img:
+                    base_img = img.convert('RGB')
 
-            # load & resize for screen
-            with Image.open(preview_path) as img:
-                img = img.convert('RGB')
-                screen_w = window.TKroot.winfo_screenwidth()
-                screen_h = window.TKroot.winfo_screenheight()
-                max_w, max_h = int(screen_w * 0.9), int(screen_h * 0.9)
-                ratio = min(max_w / img.width, max_h / img.height, 1.0)
+            # resize for screen
+            screen_w = window.TKroot.winfo_screenwidth()
+            screen_h = window.TKroot.winfo_screenheight()
+            max_w, max_h = int(screen_w * 0.9), int(screen_h * 0.9)
+            ratio = min(max_w / base_img.width, max_h / base_img.height, 1.0)
 
-                if ratio < 1.0:
-                    preview_img = img.resize((int(img.width * ratio), int(img.height * ratio)),
-                                             resample=Image.LANCZOS)
-                else:
-                    preview_img = img.copy()
+            if ratio < 1.0:
+                preview_img = base_img.resize((int(base_img.width * ratio), int(base_img.height * ratio)),
+                                              resample=Image.LANCZOS)
+            else:
+                preview_img = base_img.copy()
 
             # display in a modal window
             buf = io.BytesIO()
@@ -759,7 +761,7 @@ def main():
             x = (screen_w - preview_img.width) // 2
             y = (screen_h - preview_img.height) // 2
             layout = [[sg.Image(data=img_data)], [sg.Button('Close')]]
-            preview = sg.Window(f"Preview {Path(preview_path).name}",
+            preview = sg.Window(f"Preview {Path(full).name}",
                                 layout,
                                 resizable=True,
                                 finalize=True,
@@ -769,8 +771,6 @@ def main():
                 if e in (sg.WIN_CLOSED, 'Close'):
                     break
             preview.close()
-            if vals['-OVERLAY-']:
-                os.unlink(preview_path)
 
     window.close()
 
