@@ -581,6 +581,7 @@ def main():
 
                         worker_q = None
                         worker_thread = None
+                        break
             except queue.Empty:
                 pass
 
