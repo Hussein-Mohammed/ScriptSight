@@ -351,8 +351,19 @@ def build_thumbnails(q, vals, cfg):
 
     Progress and completion are reported back via ``q``.
     """
+    json_dir = Path(vals['-JSON-'])
+    img_dir = Path(vals['-IMG-'])
+    if not json_dir.exists():
+        show_error(f"JSON folder not found: {json_dir}")
+        q.put(('DONE', []))
+        return
+    if not img_dir.exists():
+        show_error(f"Images folder not found: {img_dir}")
+        q.put(('DONE', []))
+        return
+
     res = filter_and_collect(
-        vals['-JSON-'], vals['-IMG-'],
+        json_dir, img_dir,
         vals['-TOOLS-'], vals['-ORIENTS-'], vals['-COLORS-'], vals['-NO_WORDS-'],
         float(vals['-MIN_SCORE-']), float(vals['-MIN_AREA-'])
     )
