@@ -258,7 +258,20 @@ def filter_and_collect(json_folder, img_root, sel_tools, sel_orients, sel_colors
                 if not anns:
                     continue  # we need at least one annotation
 
-            # 4) compute max area & 5) enforce min_word_size
+            # 4) apply the tool/orient/color filters once
+            if sel_tools:
+                anns = [a for a in anns
+                        if a.get('writing_tool', '').lower() in sel_tools]
+
+            if sel_orients:
+                anns = [a for a in anns
+                        if a.get('orientation', '').lower() in sel_orients]
+
+            if sel_colors:
+                anns = [a for a in anns
+                        if rgb_to_label(a.get('color_code', '0-0-0')) in sel_colors]
+
+            # 5) compute max area & enforce min_word_size
             local_max = max((float(a.get('area', 0.0)) for a in anns), default=0.0)
             anns = [a for a in anns
                     if float(a.get('area', 0.0)) >= area_ratio * local_max]
@@ -268,25 +281,6 @@ def filter_and_collect(json_folder, img_root, sel_tools, sel_orients, sel_colors
                 if anns:
                     continue
             else:
-                if not anns:
-                    continue
-
-            # 7) apply the tool/orient/color filters once
-            if sel_tools:
-                anns = [a for a in anns
-                        if a.get('writing_tool', '').lower() in sel_tools]
-                if not anns:
-                    continue
-
-            if sel_orients:
-                anns = [a for a in anns
-                        if a.get('orientation', '').lower() in sel_orients]
-                if not anns:
-                    continue
-
-            if sel_colors:
-                anns = [a for a in anns
-                        if rgb_to_label(a.get('color_code', '0-0-0')) in sel_colors]
                 if not anns:
                     continue
 
