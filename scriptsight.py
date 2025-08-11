@@ -74,8 +74,15 @@ DEFAULT_CONFIG = {
     'cache_folder': str(SCRIPT_DIR / '.thumb_cache'),
     'cache_enabled': False,
     'show_tool_labels': True,
-}
 
+    # NEW: color config (tweak in config.json)
+    'show_tool_labels': True,
+    'lab_c_grey': 20.0,  # ↓ chroma → grey/black/white
+    'lab_l_black': 30.0,  # ≤ black
+    'lab_l_white': 99.0,  # ≥ white
+    'basic_colors': ['black', 'grey', 'white', 'red', 'green', 'blue']
+}
+GLOBAL_CFG = DEFAULT_CONFIG.copy()
 
 # ---- Annotation Cache ----
 # mapping from JSON file path to {"mtime": float, "data": dict}
@@ -145,32 +152,52 @@ def parse_color(code):
 
 
 def rgb_to_label(code):
-    r, g, b = map(int, code.split('-'))
-    # quick-exit rules (in order)
-    if max(r, g, b) < 60:
-        return 'black'
-    if min(r, g, b) > 220:
-        return 'white'
-    if max(r, g, b) - min(r, g, b) < 20:
+    try:
+        r, g, b = map(int, code.split('-'))
+    except Exception:
+        r, g, b = (255, 255, 255)
+
+    def srgb_to_lin(u):
+        u = u / 255.0
+        return u / 12.92 if u <= 0.04045 else ((u + 0.055) / 1.055) ** 2.4
+
+    R, G, B = map(srgb_to_lin, (r, g, b))
+
+    # RGB -> XYZ (D65)
+    X = 0.4124564 * R + 0.3575761 * G + 0.1804375 * B
+    Y = 0.2126729 * R + 0.7151522 * G + 0.0721750 * B
+    Z = 0.0193339 * R + 0.1191920 * G + 0.9503041 * B
+
+    # XYZ -> Lab
+    Xn, Yn, Zn = 0.95047, 1.00000, 1.08883
+
+    def f(t):
+        return t ** (1 / 3) if t > 0.008856 else (7.787 * t + 16 / 116)
+
+    fx, fy, fz = f(X / Xn), f(Y / Yn), f(Z / Zn)
+    L = 116 * fy - 16
+    a = 500 * (fx - fy)
+    b_ = 200 * (fy - fz)
+
+    C = (a * a + b_ * b_) ** 0.5
+    C_GREY = float(GLOBAL_CFG.get('lab_c_grey', 20.0))
+    L_BLACK = float(GLOBAL_CFG.get('lab_l_black', 30.0))
+    L_WHITE = float(GLOBAL_CFG.get('lab_l_white', 99.0))
+
+    if C < C_GREY:
+        if L <= L_BLACK: return 'black'
+        if L >= L_WHITE: return 'white'
         return 'grey'
 
-    # pure primaries & secondary
-    if r > g + 30 and r > b + 30:
-        return 'red'
-    if g > r + 50 and g > b + 50:
-        return 'green'
-    if b > r + 30 and b > g + 30:
-        return 'blue'
+    import math
+    h = (math.degrees(math.atan2(b_, a)) + 360.0) % 360.0
 
-    # distance fallback
-    dists = {
-        lbl: (r - ctr[0]) ** 2 + (g - ctr[1]) ** 2 + (b - ctr[2]) ** 2
-        for lbl, ctr in centers.items()
-    }
-    nearest = min(dists, key=dists.get)
+    def angdist(x, c):
+        d = abs(x - c) % 360.0
+        return min(d, 360.0 - d)
 
-    # fold into super‐group if defined
-    return parent.get(nearest, nearest)
+    centers = {'red': 0.0, 'green': 135.0, 'blue': 270.0}
+    return min(centers, key=lambda k: angdist(h, centers[k]))
 
 
 def find_image_file(img_dir, name):
@@ -418,6 +445,8 @@ def build_thumbnails(q, vals, cfg):
 # ---- Main GUI ----
 def main():
     cfg = load_config()
+    GLOBAL_CFG.update(cfg)
+
     current_json_folder = cfg.get('json_folder', '')
 
     layout = [
@@ -504,7 +533,7 @@ def main():
         # window['-COLORS-'].update(values=c)
 
         # ignore the JSON’s colours and use your full master list
-        final_colors = list(dict.fromkeys(parent.get(n, n) for n in centers))
+        final_colors = cfg.get('basic_colors', ['black', 'grey', 'white', 'red', 'green', 'blue'])
         window['-COLORS-'].update(values=final_colors)
 
     thumbs = []
